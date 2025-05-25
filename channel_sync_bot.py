@@ -8,17 +8,18 @@ from dotenv import load_dotenv
 import discord
 import logging
 
-# Set up detailed logging
+# Logging setup
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DiscordBot")
 
 # Load environment variables
 load_dotenv()
 
-# Configuration
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+
+PRIVATEBIN_URL = "https://privatebin.net"  # or your own instance
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -34,7 +35,6 @@ client = discord.Client(intents=intents)
 
 async def extract_and_upload():
     logger.debug("Starting category extraction process...")
-
     try:
         guild = client.get_guild(GUILD_ID)
         if not guild:
@@ -55,25 +55,36 @@ async def extract_and_upload():
                 formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}_\n```\n\n"
                 content += formatted
 
-        if not content.strip():
+        if not content:
             logger.warning("No categories matched for upload.")
             return
 
-        logger.info("Uploading data to 0x0.st...")
-        files = {'file': ('categories.txt', content)}
-        response = requests.post("https://0x0.st", files=files)
-        logger.debug(f"0x0.st response: {response.status_code} - {response.text}")
+        logger.info("Uploading data to PrivateBin...")
+        paste_data = {
+            "v": 2,
+            "ct": content,
+            "meta": {
+                "expire": "1week",
+                "formatter": "plaintext"
+            }
+        }
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(f"{PRIVATEBIN_URL}/", json=paste_data, headers=headers)
+        logger.debug(f"PrivateBin response: {response.status_code} - {response.text}")
 
         if response.status_code != 200:
-            logger.error(f"Failed to upload to 0x0.st: {response.text}")
+            logger.error(f"Failed to upload to PrivateBin: {response.text}")
             return
 
-        paste_url = response.text.strip()
-        logger.info(f"Data uploaded to 0x0.st: {paste_url}")
+        paste_json = response.json()
+        paste_url = f"{PRIVATEBIN_URL}/?{paste_json.get('url')}"
+        logger.info(f"Paste created: {paste_url}")
 
-        logger.info("Posting content to Server B via webhook...")
-        webhook_response = requests.post(WEBHOOK_URL, json={"content": paste_url})
+        logger.info("Fetching raw content from PrivateBin...")
+        # The PrivateBin paste is client-side encrypted, so you can just send the URL.
+        webhook_response = requests.post(WEBHOOK_URL, json={"content": f"New Categories Uploaded: {paste_url}"})
         logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
+
         if webhook_response.status_code in [200, 204]:
             logger.info("Content posted to Server B successfully.")
         else:
