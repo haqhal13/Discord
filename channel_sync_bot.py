@@ -2,11 +2,12 @@ import discord
 import asyncio
 import datetime
 import requests
+import os
 
 # CONFIGURATION
-TOKEN = 'MTM3NjE0NzA4NjcwNTQzMDU5OA.GuZiNH.LPbS_XJ8EWkhgFyc_Dn7_84lgOUr_04PXqCrd4'
-GUILD_ID = 1370333714231332986  # Example Server ID
-WEBHOOK_URL = 'https://discord.com/api/webhooks/1374871979504697425/GOG98YoADLM2LwQiSXC-9_CBNBwRMF0-pZ6pSopJwg_lxiEIO7HbPW5ESHappRaPdm7W'  # Example Webhook
+TOKEN = os.getenv("DISCORD_TOKEN")  # Secure token from Render Environment
+GUILD_ID = int(os.getenv("GUILD_ID"))  # Secure Server ID from Render Environment
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Secure Webhook URL from Render Environment
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -46,17 +47,18 @@ async def on_ready():
         await client.close()
         return
 
-    # Delete all old messages sent by the webhook
-    print("🗑️ Deleting previous webhook posts...")
-    async for message in guild.text_channels[0].history(limit=500):
-        if message.author.bot:
-            try:
-                await message.delete()
-                print(f"🗑️ Deleted message: {message.id}")
-            except:
-                pass
+    # Delete all old messages
+    print("🗑️ Deleting previous messages...")
+    for channel in guild.text_channels:
+        try:
+            async for message in channel.history(limit=500):
+                if message.author.bot:
+                    await message.delete()
+                    print(f"🗑️ Deleted message: {message.id}")
+        except Exception as e:
+            print(f"⚠️ Error deleting messages in {channel.name}: {e}")
 
-    # Send each category in its own fancy code block
+    # Post categories
     for category_name in CATEGORIES_TO_INCLUDE:
         channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
         if channels:
@@ -69,9 +71,9 @@ async def on_ready():
             if response.status_code == 204:
                 print(f"✅ Sent category: {category_name}")
             else:
-                print(f"❌ Failed to send category {category_name}: {response.status_code}, {response.text}")
+                print(f"❌ Failed to send {category_name}: {response.status_code} | {response.text}")
 
-            await asyncio.sleep(5)  # Longer delay between messages
+            await asyncio.sleep(10)  # Slow down to avoid rate limits
 
     print("✅ All categories sent!")
     await client.close()
