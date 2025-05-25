@@ -37,14 +37,12 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 
-@client.event
-async def on_ready():
+async def run_task():
     print(f"✅ Logged in as {client.user}")
 
     guild = client.get_guild(GUILD_ID)
     if not guild:
         print("❌ Could not find the server. Check GUILD_ID.")
-        await client.close()
         return
 
     print("🗑️ Deleting previous webhook posts...")
@@ -74,6 +72,17 @@ async def on_ready():
             await asyncio.sleep(5)  # Delay
 
     print("✅ All categories sent!")
-    await client.close()
+
+@client.event
+async def on_ready():
+    print(f"✅ Bot is running! Waiting for weekly task...")
+    while True:
+        now = datetime.datetime.utcnow()
+        if now.weekday() == 6 and now.hour == 12:  # Sunday 12:00 UTC
+            print("⏰ Time to run the weekly task!")
+            await run_task()
+            await asyncio.sleep(3600)  # Sleep for 1 hour to avoid re-triggering in the same hour
+        else:
+            await asyncio.sleep(600)  # Check every 10 minutes
 
 client.run(TOKEN)
