@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import logging
 import requests
 
-# Logging setup
+# Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DiscordBot")
 
@@ -18,22 +18,8 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
-# Google Sheets setup
 SHEET_NAME = "logger"
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly", 
-          "https://www.googleapis.com/auth/drive.metadata.readonly"]
-SERVICE_ACCOUNT_FILE = "service_account.json"
 
-try:
-    credentials = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    gc = gspread.authorize(credentials)
-    sheet = gc.open(SHEET_NAME).sheet1
-    logger.info("Google Sheets authentication successful.")
-except Exception as e:
-    logger.error(f"Google Sheets authentication failed: {e}")
-
-# Categories to include
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS', '🇨🇳 ASIAN .1',
     '🇨🇳 ASIAN .2', '🇲🇽 LATINA .1', '🇲🇽 LATINA .2', '❄ SNOWBUNNIE .1', '❄ SNOWBUNNIE .2',
@@ -41,7 +27,6 @@ CATEGORIES_TO_INCLUDE = [
     '☠ GOTH / ALT', '🏦 VAULT BANKS', '🔞 PORN', 'Uncatagorised Girls'
 ]
 
-# Discord bot setup
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
@@ -49,25 +34,31 @@ client = discord.Client(intents=intents)
 
 async def extract_and_upload():
     logger.info("Starting extraction process...")
+
     try:
+        # Google Sheets auth
+        SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        credentials = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
+        gc = gspread.authorize(credentials)
+        sheet = gc.open(SHEET_NAME).sheet1
+
+        # Discord extraction
         guild = client.get_guild(GUILD_ID)
         if not guild:
             logger.error("Guild not found. Check GUILD_ID.")
             return
 
-        # Clear and append header to Google Sheet
         sheet.clear()
         sheet.append_row(["Category", "Channel"])
 
-        # Extract and upload to Google Sheets
         for category_name in CATEGORIES_TO_INCLUDE:
             channels = [ch.name for ch in guild.text_channels if ch.category and ch.category.name == category_name]
             for ch in channels:
                 sheet.append_row([category_name, ch])
         logger.info("Data uploaded to Google Sheets.")
 
-        # Fetch from Sheets and format message
-        all_rows = sheet.get_all_values()[1:]  # Skip header
+        # Format message for Discord
+        all_rows = sheet.get_all_values()[1:]
         discord_message = ""
         last_category = None
         for category, channel in all_rows:
@@ -101,12 +92,11 @@ app = Flask(__name__)
 def home():
     return "Bot is live!"
 
-# Scheduler setup
+# Scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: asyncio.get_event_loop().create_task(extract_and_upload()), 'cron', day_of_week='sat', hour=12)
 scheduler.start()
 
-# Run Discord bot and Flask app
 def run():
     import threading
     threading.Thread(target=lambda: client.run(DISCORD_TOKEN)).start()
