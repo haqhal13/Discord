@@ -1,5 +1,2 @@
-import discord
-import asyncio
-import datetime
-import requests
-import os
+discord.py
+requests
