@@ -1,5 +1,6 @@
 import os
 import asyncio
+import datetime
 import discord
 import requests
 from flask import Flask
@@ -18,10 +19,6 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 MAKE_WEBHOOK_URL = os.getenv('MAKE_WEBHOOK_URL')
 
-logger.debug(f"DISCORD_TOKEN loaded: {bool(DISCORD_TOKEN)}")
-logger.debug(f"GUILD_ID loaded: {GUILD_ID}")
-logger.debug(f"MAKE_WEBHOOK_URL loaded: {bool(MAKE_WEBHOOK_URL)}")
-
 # === Discord Setup ===
 intents = discord.Intents.default()
 intents.guilds = True
@@ -35,8 +32,7 @@ CATEGORIES_TO_INCLUDE = [
     '☠ GOTH / ALT', '🏦 VAULT BANKS', '🔞 PORN', 'Uncatagorised Girls'
 ]
 
-# === Main Extraction Function ===
-async def extract_and_send():
+async def extract_and_upload():
     logger.info("Starting extraction process...")
 
     try:
@@ -45,47 +41,41 @@ async def extract_and_send():
             logger.error("Guild not found.")
             return
 
-        data = []
+        data = {"categories": []}
+
         for category_name in CATEGORIES_TO_INCLUDE:
             channels = [ch.name for ch in guild.text_channels if ch.category and ch.category.name == category_name]
             logger.debug(f"Processing category: {category_name} | Channels: {channels}")
             if channels:
-                data.append({"category": category_name, "channels": channels})
+                data["categories"].append({"category": category_name, "channels": channels})
 
-        if not data:
-            logger.warning("No matching categories/channels found.")
-            return
+        logger.info("Data ready. Sending to Make...")
 
-        logger.info("Sending extracted data to Make webhook...")
-        payload = {"server_id": GUILD_ID, "data": data}
-        response = requests.post(MAKE_WEBHOOK_URL, json=payload)
-
-        if response.status_code in [200, 201, 204]:
+        # Send JSON data to Make Webhook
+        response = requests.post(MAKE_WEBHOOK_URL, json=data)
+        if response.status_code in [200, 204]:
             logger.info("Data sent to Make successfully.")
         else:
             logger.error(f"Failed to send to Make: {response.status_code} | {response.text}")
 
     except Exception as e:
-        logger.exception(f"Error in extract_and_send: {e}")
+        logger.exception(f"Error in extract_and_upload: {e}")
 
-# === Discord Events ===
 @client.event
 async def on_ready():
     logger.info(f"Logged in as {client.user}")
-    await extract_and_send()
+    await extract_and_upload()
 
-# === Flask Server ===
+# Flask + Scheduler
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is running."
 
-# === Scheduler ===
 scheduler = BackgroundScheduler()
-scheduler.add_job(lambda: asyncio.get_event_loop().create_task(extract_and_send()), 'cron', day_of_week='sat', hour=12)
+scheduler.add_job(lambda: asyncio.get_event_loop().create_task(extract_and_upload()), 'cron', day_of_week='sat', hour=12)
 scheduler.start()
 
-# === Run App ===
 def run():
     import threading
     threading.Thread(target=lambda: client.run(DISCORD_TOKEN)).start()
