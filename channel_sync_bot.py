@@ -3,11 +3,12 @@ import asyncio
 import datetime
 import requests
 import os
+from flask import Flask
 
-# CONFIGURATION - Secure from environment
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+# CONFIGURATION (uses environment variables)
+TOKEN = os.getenv('DISCORD_TOKEN')
+GUILD_ID = int(os.getenv('GUILD_ID'))
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -47,18 +48,16 @@ async def on_ready():
         await client.close()
         return
 
-    # Delete all old bot messages
-    print("🗑️ Deleting previous messages...")
+    print("🗑️ Deleting previous webhook posts...")
     for channel in guild.text_channels:
-        try:
-            async for message in channel.history(limit=500):
-                if message.author.bot:
+        async for message in channel.history(limit=500):
+            if message.author.bot:
+                try:
                     await message.delete()
                     print(f"🗑️ Deleted message: {message.id}")
-        except Exception as e:
-            print(f"⚠️ Error deleting in {channel.name}: {e}")
+                except:
+                    pass
 
-    # Send each category
     for category_name in CATEGORIES_TO_INCLUDE:
         channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
         if channels:
@@ -71,11 +70,27 @@ async def on_ready():
             if response.status_code == 204:
                 print(f"✅ Sent category: {category_name}")
             else:
-                print(f"❌ Failed to send {category_name}: {response.status_code} | {response.text}")
+                print(f"❌ Failed to send category {category_name}: {response.status_code}, {response.text}")
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
     print("✅ All categories sent!")
-    await client.close()
+    # Don't close the client—let it run
 
-client.run(TOKEN)
+# Minimal Flask app to keep Render happy
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running."
+
+# Run Flask + Bot
+def run():
+    import threading
+    client_thread = threading.Thread(target=lambda: client.run(TOKEN))
+    client_thread.start()
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    run()
