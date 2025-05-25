@@ -19,9 +19,6 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-HASTEBIN_TOKEN = os.getenv('HASTEBIN_TOKEN')  # Your new Hastebin API token
-
-HASTEBIN_URL = "https://hastebin.com/documents"  # Use their public API
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -58,44 +55,24 @@ async def extract_and_upload():
                 formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}_\n```\n\n"
                 content += formatted
 
-        if not content:
+        if not content.strip():
             logger.warning("No categories matched for upload.")
             return
 
-        logger.info("Uploading data to Hastebin...")
-
-        headers = {
-            'Authorization': f'Bearer {HASTEBIN_TOKEN}',
-            'Content-Type': 'text/plain'
-        }
-
-        response = requests.post(HASTEBIN_URL, headers=headers, data=content.encode('utf-8'))
-        logger.debug(f"Hastebin response: {response.status_code} - {response.text}")
+        logger.info("Uploading data to 0x0.st...")
+        files = {'file': ('categories.txt', content)}
+        response = requests.post("https://0x0.st", files=files)
+        logger.debug(f"0x0.st response: {response.status_code} - {response.text}")
 
         if response.status_code != 200:
-            logger.error(f"Failed to upload to Hastebin: {response.text}")
+            logger.error(f"Failed to upload to 0x0.st: {response.text}")
             return
 
-        paste_key = response.json().get('key')
-        if not paste_key:
-            logger.error("No key found in Hastebin response.")
-            return
-
-        paste_url = f"https://hastebin.com/{paste_key}"
-        raw_url = f"https://hastebin.com/raw/{paste_key}"
-
-        logger.info(f"Paste created: {paste_url}")
-
-        logger.info("Fetching raw content from Hastebin...")
-        raw_response = requests.get(raw_url)
-        logger.debug(f"Raw content response: {raw_response.status_code}")
-        if raw_response.status_code != 200:
-            logger.error(f"Failed to fetch raw content: {raw_response.text}")
-            return
-        raw_content = raw_response.text
+        paste_url = response.text.strip()
+        logger.info(f"Data uploaded to 0x0.st: {paste_url}")
 
         logger.info("Posting content to Server B via webhook...")
-        webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_content})
+        webhook_response = requests.post(WEBHOOK_URL, json={"content": paste_url})
         logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
         if webhook_response.status_code in [200, 204]:
             logger.info("Content posted to Server B successfully.")
