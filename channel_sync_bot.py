@@ -75,16 +75,15 @@ async def extract_and_upload():
             return
         user_key = login_response.text
 
-        logger.info("Creating new Pastebin paste...")
-        paste_data = {
-            'api_option': 'paste',
-            'api_dev_key': PASTEBIN_API_KEY,
-            'api_paste_code': content,
-            'api_paste_name': f"Server A Categories {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
-            'api_paste_private': '1',
-            'api_paste_expire_date': '1W',
-            'api_user_key': user_key
-        }
+       paste_data = {
+    'api_option': 'paste',
+    'api_dev_key': PASTEBIN_API_KEY,
+    'api_paste_code': content,
+    'api_paste_name': f"Server A Categories {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
+    'api_paste_private': '2',  # Private
+    'api_paste_expire_date': '1W',
+    'api_user_key': user_key
+}
         paste_response = requests.post("https://pastebin.com/api/api_post.php", data=paste_data)
         logger.debug(f"Pastebin paste response: {paste_response.status_code} - {paste_response.text}")
         if paste_response.status_code != 200:
