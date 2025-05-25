@@ -4,10 +4,10 @@ import datetime
 import requests
 import os
 
-# CONFIGURATION
-TOKEN = os.getenv("DISCORD_TOKEN")  # Secure token from Render Environment
-GUILD_ID = int(os.getenv("GUILD_ID"))  # Secure Server ID from Render Environment
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Secure Webhook URL from Render Environment
+# CONFIGURATION - Secure from environment
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -47,7 +47,7 @@ async def on_ready():
         await client.close()
         return
 
-    # Delete all old messages
+    # Delete all old bot messages
     print("🗑️ Deleting previous messages...")
     for channel in guild.text_channels:
         try:
@@ -56,9 +56,9 @@ async def on_ready():
                     await message.delete()
                     print(f"🗑️ Deleted message: {message.id}")
         except Exception as e:
-            print(f"⚠️ Error deleting messages in {channel.name}: {e}")
+            print(f"⚠️ Error deleting in {channel.name}: {e}")
 
-    # Post categories
+    # Send each category
     for category_name in CATEGORIES_TO_INCLUDE:
         channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
         if channels:
@@ -73,7 +73,7 @@ async def on_ready():
             else:
                 print(f"❌ Failed to send {category_name}: {response.status_code} | {response.text}")
 
-            await asyncio.sleep(10)  # Slow down to avoid rate limits
+            await asyncio.sleep(10)
 
     print("✅ All categories sent!")
     await client.close()
