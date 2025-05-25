@@ -19,7 +19,9 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-HASTEBIN_TOKEN = os.getenv('HASTEBIN_TOKEN')  # Add your Hastebin token here in .env
+HASTEBIN_TOKEN = os.getenv('HASTEBIN_TOKEN')  # Your new Hastebin API token
+
+HASTEBIN_URL = "https://hastebin.com/documents"  # Use their public API
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -61,31 +63,35 @@ async def extract_and_upload():
             return
 
         logger.info("Uploading data to Hastebin...")
-        headers = {'Authorization': f'Bearer {HASTEBIN_TOKEN}'}
-        response = requests.post("https://hastebin.com/documents", headers=headers, data=content.encode('utf-8'))
+
+        headers = {
+            'Authorization': f'Bearer {HASTEBIN_TOKEN}',
+            'Content-Type': 'text/plain'
+        }
+
+        response = requests.post(HASTEBIN_URL, headers=headers, data=content.encode('utf-8'))
         logger.debug(f"Hastebin response: {response.status_code} - {response.text}")
 
         if response.status_code != 200:
             logger.error(f"Failed to upload to Hastebin: {response.text}")
             return
 
-        key = response.json().get('key')
-        if not key:
-            logger.error(f"Hastebin did not return a key: {response.text}")
+        paste_key = response.json().get('key')
+        if not paste_key:
+            logger.error("No key found in Hastebin response.")
             return
 
-        haste_url = f"https://hastebin.com/{key}"
-        logger.info(f"Hastebin URL: {haste_url}")
+        paste_url = f"https://hastebin.com/{paste_key}"
+        raw_url = f"https://hastebin.com/raw/{paste_key}"
 
-        # Fetch the raw content (Optional: Can be skipped if needed)
-        raw_url = f"https://hastebin.com/raw/{key}"
+        logger.info(f"Paste created: {paste_url}")
+
+        logger.info("Fetching raw content from Hastebin...")
         raw_response = requests.get(raw_url)
         logger.debug(f"Raw content response: {raw_response.status_code}")
-
         if raw_response.status_code != 200:
             logger.error(f"Failed to fetch raw content: {raw_response.text}")
             return
-
         raw_content = raw_response.text
 
         logger.info("Posting content to Server B via webhook...")
