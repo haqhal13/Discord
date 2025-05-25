@@ -19,9 +19,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-PASTEBIN_API_KEY = os.getenv('PASTEBIN_API_KEY')
-PASTEBIN_USERNAME = os.getenv('PASTEBIN_USERNAME')
-PASTEBIN_PASSWORD = os.getenv('PASTEBIN_PASSWORD')
+HASTEBIN_URL = "https://hastebin.com/documents"
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -62,51 +60,32 @@ async def extract_and_upload():
             logger.warning("No categories matched for upload.")
             return
 
-        logger.info("Authenticating with Pastebin...")
-        login_data = {
-            'api_dev_key': PASTEBIN_API_KEY,
-            'api_user_name': PASTEBIN_USERNAME,
-            'api_user_password': PASTEBIN_PASSWORD
-        }
-        login_response = requests.post("https://pastebin.com/api/api_login.php", data=login_data)
-        logger.debug(f"Pastebin login response: {login_response.status_code} - {login_response.text}")
-        if login_response.status_code != 200:
-            logger.error(f"Pastebin login failed: {login_response.text}")
+        logger.info("Uploading data to Hastebin...")
+        haste_response = requests.post(HASTEBIN_URL, data=content.encode('utf-8'))
+        logger.debug(f"Hastebin response: {haste_response.status_code} - {haste_response.text}")
+
+        if haste_response.status_code != 200:
+            logger.error(f"Failed to upload to Hastebin: {haste_response.text}")
             return
-        user_key = login_response.text
 
-        logger.info("Creating new Pastebin paste...")
-        paste_data = {
-            'api_option': 'paste',
-            'api_dev_key': PASTEBIN_API_KEY,
-            'api_paste_code': content,
-            'api_paste_name': f"Server A Categories {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
-            'api_paste_private': '2',  # Private
-            'api_paste_expire_date': '1W',
-            'api_user_key': user_key
-        }
-        paste_response = requests.post("https://pastebin.com/api/api_post.php", data=paste_data)
-        logger.debug(f"Pastebin paste response: {paste_response.status_code} - {paste_response.text}")
-        if paste_response.status_code != 200:
-            logger.error(f"Failed to create paste: {paste_response.text}")
-            return
-        paste_url = paste_response.text
-        logger.info(f"Paste created: {paste_url}")
+        haste_key = haste_response.json().get("key")
+        haste_raw_url = f"https://hastebin.com/raw/{haste_key}"
+        logger.info(f"Hastebin URL: {haste_raw_url}")
 
-        paste_key = paste_url.split('/')[-1]
-        raw_url = f"https://pastebin.com/raw/{paste_key}"
-
-        logger.info("Fetching raw content from Pastebin...")
-        raw_response = requests.get(raw_url)
+        logger.info("Fetching raw content from Hastebin...")
+        raw_response = requests.get(haste_raw_url)
         logger.debug(f"Raw content response: {raw_response.status_code}")
+
         if raw_response.status_code != 200:
             logger.error(f"Failed to fetch raw content: {raw_response.text}")
             return
+
         raw_content = raw_response.text
 
         logger.info("Posting content to Server B via webhook...")
         webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_content})
         logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
+
         if webhook_response.status_code in [200, 204]:
             logger.info("Content posted to Server B successfully.")
         else:
