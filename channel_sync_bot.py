@@ -1,15 +1,22 @@
-import discord
+import os
 import asyncio
 import datetime
 import requests
-import os
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
+from dotenv import load_dotenv
+import discord
 
-# CONFIGURATION (uses environment variables)
-TOKEN = os.getenv('DISCORD_TOKEN')
+# Load environment variables
+load_dotenv()
+
+# Configuration
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+PASTEBIN_API_KEY = os.getenv('PASTEBIN_API_KEY')
+PASTEBIN_USERNAME = os.getenv('PASTEBIN_USERNAME')
+PASTEBIN_PASSWORD = os.getenv('PASTEBIN_PASSWORD')
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -39,69 +46,103 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 
-async def post_category_list():
-    print("✅ Posting category list...")
+async def extract_and_upload():
+    print("🔍 Extracting categories from Server A...")
     guild = client.get_guild(GUILD_ID)
     if not guild:
         print("❌ Could not find the server. Check GUILD_ID.")
         return
 
-    # Delete previous webhook messages
-    print("🗑️ Deleting previous webhook posts...")
-    for channel in guild.text_channels:
-        async for message in channel.history(limit=500):
-            if message.author.bot:
-                try:
-                    await message.delete()
-                    print(f"🗑️ Deleted message: {message.id}")
-                except:
-                    pass
-
-    # Post categories
+    content = ""
     for category_name in CATEGORIES_TO_INCLUDE:
         channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
         if channels:
             formatted = f"```md\n# {category_name}\n"
             for ch in channels:
                 formatted += f"- {ch.name}\n"
-            formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}_\n```"
+            formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}_\n```\n\n"
+            content += formatted
 
-            response = requests.post(WEBHOOK_URL, json={"content": formatted})
-            if response.status_code == 204:
-                print(f"✅ Sent category: {category_name}")
-            else:
-                print(f"❌ Failed to send category {category_name}: {response.status_code}, {response.text}")
+    if not content:
+        print("⚠️ No categories found to upload.")
+        return
 
-            await asyncio.sleep(5)
+    # Authenticate with Pastebin
+    print("🔐 Authenticating with Pastebin...")
+    login_data = {
+        'api_dev_key': PASTEBIN_API_KEY,
+        'api_user_name': PASTEBIN_USERNAME,
+        'api_user_password': PASTEBIN_PASSWORD
+    }
+    login_response = requests.post("https://pastebin.com/api/api_login.php", data=login_data)
+    if login_response.status_code != 200:
+        print(f"❌ Pastebin login failed: {login_response.text}")
+        return
+    user_key = login_response.text
 
-    print("✅ All categories sent!")
+    # Create a new paste
+    print("📝 Creating a new paste on Pastebin...")
+    paste_data = {
+        'api_option': 'paste',
+        'api_dev_key': PASTEBIN_API_KEY,
+        'api_paste_code': content,
+        'api_paste_name': f"Server A Categories {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
+        'api_paste_private': '1',  # Unlisted
+        'api_paste_expire_date': '1W',
+        'api_user_key': user_key
+    }
+    paste_response = requests.post("https://pastebin.com/api/api_post.php", data=paste_data)
+    if paste_response.status_code != 200:
+        print(f"❌ Failed to create paste: {paste_response.text}")
+        return
+    paste_url = paste_response.text
+    print(f"✅ Paste created: {paste_url}")
+
+    # Extract paste key from URL
+    paste_key = paste_url.split('/')[-1]
+    raw_url = f"https://pastebin.com/raw/{paste_key}"
+
+    # Fetch the raw content
+    print("📥 Fetching raw content from Pastebin...")
+    raw_response = requests.get(raw_url)
+    if raw_response.status_code != 200:
+        print(f"❌ Failed to fetch raw content: {raw_response.text}")
+        return
+    raw_content = raw_response.text
+
+    # Post to Server B via webhook
+    print("📤 Posting content to Server B...")
+    webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_content})
+    if webhook_response.status_code in [200, 204]:
+        print("✅ Content posted to Server B successfully.")
+    else:
+        print(f"❌ Failed to post content to Server B: {webhook_response.text}")
 
 @client.event
 async def on_ready():
-    print(f"✅ Logged in as {client.user}")
-    # Run once on startup
-    await post_category_list()
+    print(f"🤖 Logged in as {client.user}")
+    await extract_and_upload()
 
-# Flask app to keep Render awake
+# Flask app to keep the bot alive
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running."
 
-# Scheduler setup
+# Scheduler to run the task every Saturday at 12 PM
 scheduler = BackgroundScheduler()
 
-def scheduled_job():
+def scheduled_task():
     loop = asyncio.get_event_loop()
-    loop.create_task(post_category_list())
+    loop.create_task(extract_and_upload())
 
-scheduler.add_job(scheduled_job, 'cron', day_of_week='sat', hour=12, minute=0)
+scheduler.add_job(scheduled_task, 'cron', day_of_week='sat', hour=12, minute=0)
 scheduler.start()
 
 def run():
     import threading
-    client_thread = threading.Thread(target=lambda: client.run(TOKEN))
+    client_thread = threading.Thread(target=lambda: client.run(DISCORD_TOKEN))
     client_thread.start()
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
