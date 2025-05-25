@@ -6,7 +6,11 @@ from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 import discord
-import traceback
+import logging
+
+# Set up detailed logging
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("DiscordBot")
 
 # Load environment variables
 load_dotenv()
@@ -20,50 +24,33 @@ PASTEBIN_USERNAME = os.getenv('PASTEBIN_USERNAME')
 PASTEBIN_PASSWORD = os.getenv('PASTEBIN_PASSWORD')
 
 CATEGORIES_TO_INCLUDE = [
-    '📦 ETHNICITY VAULTS',
-    '🧔 MALE CREATORS / AGENCY',
-    '💪 HGF',
-    '🎥 NET VIDEO GIRLS',
-    '🇨🇳 ASIAN .1',
-    '🇨🇳 ASIAN .2',
-    '🇲🇽 LATINA .1',
-    '🇲🇽 LATINA .2',
-    '❄ SNOWBUNNIE .1',
-    '❄ SNOWBUNNIE .2',
-    '🇮🇳 INDIAN / DESI',
-    '🇸🇦 ARAB',
-    '🧬 MIXED / LIGHTSKIN',
-    '🏴 BLACK',
-    '🌺 POLYNESIAN',
-    '☠ GOTH / ALT',
-    '🏦 VAULT BANKS',
-    '🔞 PORN',
-    'Uncatagorised Girls'
+    '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
+    '🇨🇳 ASIAN .1', '🇨🇳 ASIAN .2', '🇲🇽 LATINA .1', '🇲🇽 LATINA .2', '❄ SNOWBUNNIE .1', '❄ SNOWBUNNIE .2',
+    '🇮🇳 INDIAN / DESI', '🇸🇦 ARAB', '🧬 MIXED / LIGHTSKIN', '🏴 BLACK', '🌺 POLYNESIAN',
+    '☠ GOTH / ALT', '🏦 VAULT BANKS', '🔞 PORN', 'Uncatagorised Girls'
 ]
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
-
 client = discord.Client(intents=intents)
 
 async def extract_and_upload():
-    try:
-        print("\n========== STARTING extract_and_upload() ==========")
-        print(f"Time: {datetime.datetime.utcnow()}")
+    logger.debug("Starting category extraction process...")
 
-        print(f"🔍 Trying to fetch GUILD_ID: {GUILD_ID}")
+    try:
         guild = client.get_guild(GUILD_ID)
         if not guild:
-            print("❌ Guild not found. Check if bot has access to this server.")
+            logger.error("Guild not found. Check GUILD_ID.")
             return
-        print(f"✅ Fetched guild: {guild.name} ({guild.id})")
+
+        logger.info(f"Connected to guild: {guild.name} (ID: {guild.id})")
+        logger.debug(f"Fetching categories: {CATEGORIES_TO_INCLUDE}")
 
         content = ""
         for category_name in CATEGORIES_TO_INCLUDE:
-            print(f"\n🔎 Checking category: {category_name}")
             channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
-            print(f"✅ Found {len(channels)} channels under {category_name}")
+            logger.debug(f"Category '{category_name}': Found {len(channels)} channels.")
             if channels:
                 formatted = f"```md\n# {category_name}\n"
                 for ch in channels:
@@ -72,24 +59,23 @@ async def extract_and_upload():
                 content += formatted
 
         if not content:
-            print("⚠️ No channels found in any categories. Exiting upload function.")
+            logger.warning("No categories matched for upload.")
             return
 
-        print("\n🔐 Authenticating with Pastebin...")
+        logger.info("Authenticating with Pastebin...")
         login_data = {
             'api_dev_key': PASTEBIN_API_KEY,
             'api_user_name': PASTEBIN_USERNAME,
             'api_user_password': PASTEBIN_PASSWORD
         }
-        print(f"🔑 Login data: {login_data}")
         login_response = requests.post("https://pastebin.com/api/api_login.php", data=login_data)
-        print(f"🔐 Pastebin login response code: {login_response.status_code}, text: {login_response.text}")
+        logger.debug(f"Pastebin login response: {login_response.status_code} - {login_response.text}")
         if login_response.status_code != 200:
-            print("❌ Pastebin login failed.")
+            logger.error(f"Pastebin login failed: {login_response.text}")
             return
-        user_key = login_response.text.strip()
+        user_key = login_response.text
 
-        print("📝 Creating new Pastebin paste...")
+        logger.info("Creating new Pastebin paste...")
         paste_data = {
             'api_option': 'paste',
             'api_dev_key': PASTEBIN_API_KEY,
@@ -99,47 +85,42 @@ async def extract_and_upload():
             'api_paste_expire_date': '1W',
             'api_user_key': user_key
         }
-        print(f"📦 Paste data: {paste_data}")
         paste_response = requests.post("https://pastebin.com/api/api_post.php", data=paste_data)
-        print(f"📝 Pastebin response: {paste_response.status_code} - {paste_response.text}")
+        logger.debug(f"Pastebin paste response: {paste_response.status_code} - {paste_response.text}")
         if paste_response.status_code != 200:
-            print("❌ Pastebin paste creation failed.")
+            logger.error(f"Failed to create paste: {paste_response.text}")
             return
-        paste_url = paste_response.text.strip()
-        print(f"✅ Pastebin paste created: {paste_url}")
+        paste_url = paste_response.text
+        logger.info(f"Paste created: {paste_url}")
 
         paste_key = paste_url.split('/')[-1]
         raw_url = f"https://pastebin.com/raw/{paste_key}"
 
-        print("📥 Fetching raw Pastebin content...")
+        logger.info("Fetching raw content from Pastebin...")
         raw_response = requests.get(raw_url)
-        print(f"📥 Raw content status: {raw_response.status_code}")
+        logger.debug(f"Raw content response: {raw_response.status_code}")
         if raw_response.status_code != 200:
-            print(f"❌ Failed to fetch raw content: {raw_response.text}")
+            logger.error(f"Failed to fetch raw content: {raw_response.text}")
             return
         raw_content = raw_response.text
-        print(f"📄 Raw content:\n{raw_content[:500]}...")  # Show first 500 chars
 
-        print("📤 Posting to Server B via webhook...")
+        logger.info("Posting content to Server B via webhook...")
         webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_content})
-        print(f"📤 Webhook response: {webhook_response.status_code} - {webhook_response.text}")
+        logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
         if webhook_response.status_code in [200, 204]:
-            print("✅ Successfully posted content to Server B.")
+            logger.info("Content posted to Server B successfully.")
         else:
-            print("❌ Webhook post failed.")
-
-        print("========== FINISHED extract_and_upload() ==========\n")
+            logger.error(f"Failed to post content to Server B: {webhook_response.text}")
 
     except Exception as e:
-        print(f"❌ Exception in extract_and_upload(): {e}")
-        traceback.print_exc()
+        logger.exception(f"Unexpected error in extract_and_upload: {str(e)}")
 
 @client.event
 async def on_ready():
-    print(f"\n🤖 Bot logged in as {client.user} at {datetime.datetime.utcnow()}")
+    logger.info(f"🤖 Logged in as {client.user} (ID: {client.user.id})")
     await extract_and_upload()
 
-# Flask app
+# Flask app to keep bot alive
 app = Flask(__name__)
 
 @app.route('/')
@@ -149,7 +130,7 @@ def home():
 scheduler = BackgroundScheduler()
 
 def scheduled_task():
-    print(f"\n🕒 Running scheduled task at {datetime.datetime.utcnow()}")
+    logger.info("Running scheduled task (every Saturday at 12 PM)...")
     loop = asyncio.get_event_loop()
     loop.create_task(extract_and_upload())
 
@@ -158,11 +139,11 @@ scheduler.start()
 
 def run():
     import threading
+    logger.info("Starting Discord bot and Flask app...")
     client_thread = threading.Thread(target=lambda: client.run(DISCORD_TOKEN))
     client_thread.start()
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    print("🚀 Starting bot...")
     run()
