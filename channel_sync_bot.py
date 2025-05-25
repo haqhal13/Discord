@@ -7,19 +7,20 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 import discord
 import logging
+import re
 
 # Logging setup
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DiscordBot")
 
-# Load environment variables
+# Load .env
 load_dotenv()
 
+# Config
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-
-PRIVATEBIN_URL = "https://privatebin.net"  # or your own instance
+PRIVATEBIN_URL = os.getenv('PRIVATEBIN_URL', 'https://privatebin.net')
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -42,8 +43,6 @@ async def extract_and_upload():
             return
 
         logger.info(f"Connected to guild: {guild.name} (ID: {guild.id})")
-        logger.debug(f"Fetching categories: {CATEGORIES_TO_INCLUDE}")
-
         content = ""
         for category_name in CATEGORIES_TO_INCLUDE:
             channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
@@ -56,39 +55,39 @@ async def extract_and_upload():
                 content += formatted
 
         if not content:
-            logger.warning("No categories matched for upload.")
+            logger.warning("No content found to upload.")
             return
 
         logger.info("Uploading data to PrivateBin...")
-        paste_data = {
-            "v": 2,
-            "ct": content,
-            "meta": {
-                "expire": "1week",
-                "formatter": "plaintext"
-            }
-        }
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(f"{PRIVATEBIN_URL}/", json=paste_data, headers=headers)
-        logger.debug(f"PrivateBin response: {response.status_code} - {response.text}")
 
+        data = {
+            "text": content,
+            "formatter": "plaintext",
+            "expire": "1day"
+        }
+
+        response = requests.post(f"{PRIVATEBIN_URL}/", data=data)
         if response.status_code != 200:
-            logger.error(f"Failed to upload to PrivateBin: {response.text}")
+            logger.error(f"Failed to upload to PrivateBin: {response.status_code} - {response.text}")
             return
 
-        paste_json = response.json()
-        paste_url = f"{PRIVATEBIN_URL}/?{paste_json.get('url')}"
-        logger.info(f"Paste created: {paste_url}")
-
-        logger.info("Fetching raw content from PrivateBin...")
-        # The PrivateBin paste is client-side encrypted, so you can just send the URL.
-        webhook_response = requests.post(WEBHOOK_URL, json={"content": f"New Categories Uploaded: {paste_url}"})
-        logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
-
-        if webhook_response.status_code in [200, 204]:
-            logger.info("Content posted to Server B successfully.")
+        match = re.search(r'href="(.*?)"', response.text)
+        if match:
+            paste_url = match.group(1)
+            if paste_url.startswith("/"):
+                paste_url = f"{PRIVATEBIN_URL}{paste_url}"
+            logger.info(f"PrivateBin paste created: {paste_url}")
         else:
-            logger.error(f"Failed to post content to Server B: {webhook_response.text}")
+            logger.error("Could not extract paste URL from PrivateBin response.")
+            return
+
+        # Send link to Discord webhook
+        logger.info("Posting link to Server B via webhook...")
+        webhook_response = requests.post(WEBHOOK_URL, json={"content": f"New content uploaded: {paste_url}"})
+        if webhook_response.status_code in [200, 204]:
+            logger.info("Content posted to Discord successfully.")
+        else:
+            logger.error(f"Failed to post to Discord: {webhook_response.status_code} - {webhook_response.text}")
 
     except Exception as e:
         logger.exception(f"Unexpected error in extract_and_upload: {str(e)}")
@@ -98,7 +97,6 @@ async def on_ready():
     logger.info(f"🤖 Logged in as {client.user} (ID: {client.user.id})")
     await extract_and_upload()
 
-# Flask app to keep bot alive
 app = Flask(__name__)
 
 @app.route('/')
