@@ -4,7 +4,7 @@ import datetime
 import requests
 import os
 
-# CONFIGURATION
+# CONFIGURATION (uses environment variables)
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
