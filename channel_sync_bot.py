@@ -1,17 +1,17 @@
 import os
 import asyncio
 import discord
-import logging
+import json
+import re
+import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
-import requests
-import json
-import re
+import logging
 
 # === Logging Setup ===
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("DiscordBot")
+logger = logging.getLogger("Discord-Make-Bridge")
 
 # === Load Environment Variables ===
 load_dotenv()
@@ -26,20 +26,23 @@ logger.debug(f"MAKE_WEBHOOK_URL loaded: {bool(MAKE_WEBHOOK_URL)}")
 # === Discord Setup ===
 intents = discord.Intents.default()
 intents.guilds = True
+intents.messages = True
 client = discord.Client(intents=intents)
 
-CATEGORIES_TO_INCLUDE = [
-    '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS', '🇨🇳 ASIAN .1',
-    '🇨🇳 ASIAN .2', '🇲🇽 LATINA .1', '🇲🇽 LATINA .2', '❄ SNOWBUNNIE .1', '❄ SNOWBUNNIE .2',
-    '🇮🇳 INDIAN / DESI', '🇸🇦 ARAB', '🧬 MIXED / LIGHTSKIN', '🏴 BLACK', '🌺 POLYNESIAN',
-    '☠ GOTH / ALT', '🏦 VAULT BANKS', '🔞 PORN', 'Uncatagorised Girls'
-]
+# === Utility Functions ===
+def strip_emojis(text):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # Emoticons
+        "\U0001F300-\U0001F5FF"  # Symbols & Pictographs
+        "\U0001F680-\U0001F6FF"  # Transport & Map
+        "\U0001F1E0-\U0001F1FF"  # Flags
+        "\U00002700-\U000027BF"  # Dingbats
+        "\U000024C2-\U0001F251"
+        "]+", flags=re.UNICODE)
+    return emoji_pattern.sub(r'', text).strip()
 
-# === Helper to Extract Clean Names ===
-def clean_name(name):
-    return re.sub(r'[^a-zA-Z0-9\s\-]', '', name).strip()
-
-# === Extract and Upload ===
+# === Main Extraction ===
 async def extract_and_upload():
     logger.info("Starting extraction process...")
 
@@ -49,44 +52,56 @@ async def extract_and_upload():
             logger.error("Guild not found.")
             return
 
-        data = []
+        data_payload = []
         for category in guild.categories:
-            if category.name not in CATEGORIES_TO_INCLUDE:
-                logger.debug(f"Skipping category: {category.name}")
-                continue
-
-            channels = [ch.name for ch in category.channels if isinstance(ch, discord.TextChannel)]
-            logger.debug(f"Processing category: {category.name} | Channels: {channels}")
-
-            data.append({
-                "category_raw": clean_name(category.name),
+            logger.debug(f"Processing category: {category.name}")
+            category_raw = strip_emojis(category.name)
+            category_obj = {
                 "category_full": category.name,
-                "channels": [
-                    {"channel_raw": clean_name(ch), "channel_full": ch} for ch in channels
-                ]
-            })
+                "category_raw": category_raw,
+                "channels": []
+            }
+            for channel in category.channels:
+                if isinstance(channel, discord.TextChannel):
+                    channel_raw = strip_emojis(channel.name)
+                    channel_obj = {
+                        "channel_full": channel.name,
+                        "channel_raw": channel_raw
+                    }
+                    category_obj["channels"].append(channel_obj)
+                    logger.debug(f"  Channel: {channel.name} | Raw: {channel_raw}")
+            data_payload.append(category_obj)
 
-        logger.debug("Final extracted data:")
-        logger.debug(json.dumps(data, indent=2, ensure_ascii=False))
+        logger.debug("Full extracted data:")
+        logger.debug(json.dumps(data_payload, indent=2, ensure_ascii=False))
 
-        send_to_make(data)
-
-    except Exception as e:
-        logger.exception(f"Error in extract_and_upload: {e}")
-
-# === Post to Make Webhook ===
-def send_to_make(data):
-    logger.info("Sending extracted data to Make webhook...")
-    try:
-        payload = {"categories": data}
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(MAKE_WEBHOOK_URL, json=payload, headers=headers)
+        logger.info("Sending extracted data to Make webhook...")
+        response = requests.post(MAKE_WEBHOOK_URL, json={"categories": data_payload})
         if response.status_code in [200, 204]:
             logger.info("Data sent to Make successfully.")
         else:
             logger.error(f"Failed to send to Make: {response.status_code} | {response.text}")
+
     except Exception as e:
-        logger.exception(f"Error posting to Make: {e}")
+        logger.exception(f"Error in extract_and_upload: {e}")
+
+# === Re-post Data Back to Discord ===
+async def post_to_discord(processed_data):
+    logger.info("Posting reformatted data back to Discord...")
+    try:
+        message = ""
+        for category in processed_data.get("categories", []):
+            message += f"**{category['category_full']}**\n"
+            for channel in category.get("channels", []):
+                message += f"- {channel['channel_full']}\n"
+        webhook_url = MAKE_WEBHOOK_URL  # If you have a Discord webhook URL, replace this
+        response = requests.post(webhook_url, json={"content": message})
+        if response.status_code in [200, 204]:
+            logger.info("Posted back to Discord successfully.")
+        else:
+            logger.error(f"Failed to post to Discord: {response.status_code} | {response.text}")
+    except Exception as e:
+        logger.exception(f"Error posting to Discord: {e}")
 
 # === Discord Events ===
 @client.event
@@ -94,13 +109,13 @@ async def on_ready():
     logger.info(f"Logged in as {client.user}")
     await extract_and_upload()
 
-# === Flask Server ===
+# === Flask Server for Keep-Alive ===
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is running."
 
-# === Scheduler ===
+# === Scheduler Setup ===
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: asyncio.get_event_loop().create_task(extract_and_upload()), 'cron', day_of_week='sat', hour=12)
 scheduler.start()
