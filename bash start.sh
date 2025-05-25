@@ -1,0 +1,2 @@
+#!/bin/bash
+python channel_sync_bot.py
