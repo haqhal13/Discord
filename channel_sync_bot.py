@@ -4,10 +4,10 @@ import datetime
 import requests
 import os
 
-# CONFIGURATION (uses environment variables)
-TOKEN = os.getenv('DISCORD_TOKEN')
-GUILD_ID = int(os.getenv('GUILD_ID'))
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+# CONFIGURATION - Secure from environment
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -37,24 +37,28 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 
-async def run_task():
+@client.event
+async def on_ready():
     print(f"✅ Logged in as {client.user}")
 
     guild = client.get_guild(GUILD_ID)
     if not guild:
         print("❌ Could not find the server. Check GUILD_ID.")
+        await client.close()
         return
 
-    print("🗑️ Deleting previous webhook posts...")
+    # Delete all old bot messages
+    print("🗑️ Deleting previous messages...")
     for channel in guild.text_channels:
-        async for message in channel.history(limit=500):
-            if message.author.bot:
-                try:
+        try:
+            async for message in channel.history(limit=500):
+                if message.author.bot:
                     await message.delete()
                     print(f"🗑️ Deleted message: {message.id}")
-                except:
-                    pass
+        except Exception as e:
+            print(f"⚠️ Error deleting in {channel.name}: {e}")
 
+    # Send each category
     for category_name in CATEGORIES_TO_INCLUDE:
         channels = [ch for ch in guild.text_channels if ch.category and ch.category.name == category_name]
         if channels:
@@ -67,22 +71,11 @@ async def run_task():
             if response.status_code == 204:
                 print(f"✅ Sent category: {category_name}")
             else:
-                print(f"❌ Failed to send category {category_name}: {response.status_code}, {response.text}")
+                print(f"❌ Failed to send {category_name}: {response.status_code} | {response.text}")
 
-            await asyncio.sleep(5)  # Delay
+            await asyncio.sleep(10)
 
     print("✅ All categories sent!")
-
-@client.event
-async def on_ready():
-    print(f"✅ Bot is running! Waiting for weekly task...")
-    while True:
-        now = datetime.datetime.utcnow()
-        if now.weekday() == 6 and now.hour == 12:  # Sunday 12:00 UTC
-            print("⏰ Time to run the weekly task!")
-            await run_task()
-            await asyncio.sleep(3600)  # Sleep for 1 hour to avoid re-triggering in the same hour
-        else:
-            await asyncio.sleep(600)  # Check every 10 minutes
+    await client.close()
 
 client.run(TOKEN)
