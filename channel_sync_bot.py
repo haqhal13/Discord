@@ -19,6 +19,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+HASTEBIN_TOKEN = os.getenv('HASTEBIN_TOKEN')  # Add your Hastebin token here in .env
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS', '🧔 MALE CREATORS / AGENCY', '💪 HGF', '🎥 NET VIDEO GIRLS',
@@ -60,21 +61,36 @@ async def extract_and_upload():
             return
 
         logger.info("Uploading data to Hastebin...")
-        haste_response = requests.post("https://hastebin.skyra.pw/documents", data=content.encode('utf-8'))
-        logger.debug(f"Hastebin response: {haste_response.status_code} - {haste_response.text}")
+        headers = {'Authorization': f'Bearer {HASTEBIN_TOKEN}'}
+        response = requests.post("https://hastebin.com/documents", headers=headers, data=content.encode('utf-8'))
+        logger.debug(f"Hastebin response: {response.status_code} - {response.text}")
 
-        if haste_response.status_code != 200:
-            logger.error(f"Failed to upload to Hastebin: {haste_response.text}")
+        if response.status_code != 200:
+            logger.error(f"Failed to upload to Hastebin: {response.text}")
             return
 
-        paste_key = haste_response.json()['key']
-        raw_url = f"https://hastebin.skyra.pw/raw/{paste_key}"
-        logger.info(f"Hastebin paste created: {raw_url}")
+        key = response.json().get('key')
+        if not key:
+            logger.error(f"Hastebin did not return a key: {response.text}")
+            return
+
+        haste_url = f"https://hastebin.com/{key}"
+        logger.info(f"Hastebin URL: {haste_url}")
+
+        # Fetch the raw content (Optional: Can be skipped if needed)
+        raw_url = f"https://hastebin.com/raw/{key}"
+        raw_response = requests.get(raw_url)
+        logger.debug(f"Raw content response: {raw_response.status_code}")
+
+        if raw_response.status_code != 200:
+            logger.error(f"Failed to fetch raw content: {raw_response.text}")
+            return
+
+        raw_content = raw_response.text
 
         logger.info("Posting content to Server B via webhook...")
-        webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_url})
+        webhook_response = requests.post(WEBHOOK_URL, json={"content": raw_content})
         logger.debug(f"Webhook response: {webhook_response.status_code} - {webhook_response.text}")
-
         if webhook_response.status_code in [200, 204]:
             logger.info("Content posted to Server B successfully.")
         else:
@@ -110,11 +126,6 @@ def run():
     logger.info("Starting Discord bot and Flask app...")
     client_thread = threading.Thread(target=lambda: client.run(DISCORD_TOKEN))
     client_thread.start()
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host="0.0.0.0", port=port)
-
-if __name__ == '__main__':
-    run()
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
 
