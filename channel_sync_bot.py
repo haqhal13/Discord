@@ -33,7 +33,6 @@ CATEGORIES_TO_INCLUDE = [
     'Uncatagorised Girls'
 ]
 
-# Set Discord Intents
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
@@ -41,7 +40,6 @@ intents.messages = True
 client = discord.Client(intents=intents)
 scheduler = AsyncIOScheduler()
 
-# Main function to fetch and post categories
 async def fetch_and_post():
     print("🚀 Fetching and posting categories...")
 
@@ -50,7 +48,6 @@ async def fetch_and_post():
         print("❌ Could not find the server. Check GUILD_ID.")
         return
 
-    # Delete previous bot posts
     for channel in guild.text_channels:
         async for message in channel.history(limit=100):
             if message.author == client.user:
@@ -60,9 +57,7 @@ async def fetch_and_post():
                 except:
                     pass
 
-    # Post categories
     for category_name in CATEGORIES_TO_INCLUDE:
-        # Normalize name matching
         channels = [
             ch for ch in guild.text_channels
             if ch.category and ch.category.name.strip().lower() == category_name.strip().lower()
@@ -87,35 +82,30 @@ async def fetch_and_post():
 @client.event
 async def on_ready():
     print(f"✅ Logged in as {client.user}")
+
+    # Run post on startup
     await fetch_and_post()
 
-# Schedule weekly post based on user-defined date & time
-def schedule_post(user_datetime_str):
-    try:
-        dt = datetime.datetime.strptime(user_datetime_str, "%Y-%m-%d %H:%M")
-        scheduler.add_job(lambda: asyncio.ensure_future(fetch_and_post()), trigger='cron',
-                          year=dt.year, month=dt.month, day=dt.day, hour=dt.hour, minute=dt.minute)
-        print(f"🗓️ Scheduled job at {dt}")
-    except ValueError:
-        print("❌ Invalid date format. Use YYYY-MM-DD HH:MM (24-hour)")
+    # Schedule the weekly job
+    user_datetime_str = "2025-06-01 14:30"  # Set your time here (UTC)
+    dt = datetime.datetime.strptime(user_datetime_str, "%Y-%m-%d %H:%M")
+    scheduler.add_job(fetch_and_post, trigger='cron', day_of_week=dt.weekday(), hour=dt.hour, minute=dt.minute)
+    scheduler.start()
 
-# Flask app for liveness pings
+    print(f"🗓️ Scheduled weekly job at {dt.strftime('%A %H:%M')} UTC")
+
+# Flask app for uptime pings
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running."
 
-# Start everything
-def run():
-    import threading
-    threading.Thread(target=lambda: client.run(TOKEN)).start()
+def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    # Set the exact time you want the post every week (24h format) 👇
-    schedule_post("2025-06-01 14:30")  # Example: every Sunday 14:30 UTC
-
-    scheduler.start()
-    run()
+    import threading
+    threading.Thread(target=run_flask).start()
+    client.run(TOKEN)
