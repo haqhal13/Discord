@@ -1,7 +1,4 @@
 discord.py
+Flask
+APScheduler
 requests
-flask
-apscheduler
-python-dotenv
-gspread
-google-auth
