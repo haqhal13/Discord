@@ -13,7 +13,7 @@ WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
-    '🧔 MALE CREATORS / AGENCY',
+    '🧔 MALE CREATORS  / AGENCY',
     '💪 HGF',
     '🎥 NET VIDEO GIRLS',
     '🇨🇳 ASIAN .1',
