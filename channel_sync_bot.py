@@ -1,26 +1,24 @@
-# TeleSync.py
-import os
-import logging
-import threading
-
-from flask import Flask, request
 import discord
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+import asyncio
+import datetime
+import requests
+import os
+import pytz
+from flask import Flask
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
-# ────── CONFIG ──────
-DISCORD_TOKEN      = os.environ["DISCORD_TOKEN"]
-DISCORD_GUILD_ID   = int(os.environ["DISCORD_GUILD_ID"])
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-# WEBHOOK_URL should be like "https://myapp.onrender.com"
-WEBHOOK_URL        = os.environ["WEBHOOK_URL"].rstrip("/") + "/webhook"
-PORT               = int(os.environ.get("PORT", "5000"))
+# CONFIGURATION
+TOKEN = os.getenv('DISCORD_TOKEN')
+GUILD_ID = int(os.getenv('GUILD_ID'))
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
-# only these categories will be echoed
+POST_SCHEDULE = {
+    "datetime": "2025-06-01 08:00",   # First post time (local time)
+    "timezone": "Europe/London",      # e.g., 'Europe/London', 'Asia/Dubai'
+    "repeat_every": "7d"              # e.g., '1d', '2d', '4h', '30m'
+}
+
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
     '🧔 MALE CREATORS  / AGENCY',
@@ -43,97 +41,104 @@ CATEGORIES_TO_INCLUDE = [
     'Uncatagorised Girls'
 ]
 
-# ────── LOGGER ──────
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ────── HELPERS ──────
-def chunked(lst, n):
-    """Yield successive n-sized chunks from lst."""
-    for i in range(0, len(lst), n):
-        yield lst[i : i + n]
-
-def escape_md2(text: str) -> str:
-    """Escape just periods for MarkdownV2."""
-    return text.replace(".", r"\.")
-
-# ────── DISCORD CLIENT ──────
 intents = discord.Intents.default()
-intents.guilds   = True
-intents.messages = False
-discord_client   = discord.Client(intents=intents)
+intents.guilds = True
+intents.messages = True
+client = discord.Client(intents=intents)
+scheduler = AsyncIOScheduler()
 
-@discord_client.event
-async def on_ready():
-    logger.info(f"✅ Discord logged in as {discord_client.user} (ID {discord_client.user.id})")
+adaptive_delay = 1  # Start fast (1 second)
 
-# ────── TELEGRAM BOT ──────
-app = Flask(__name__)
-telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
-
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1) immediate “we’re working” prompt:
-    await update.message.reply_text(
-        "📡 Getting up to date list please wait 2-5 mins…"
-    )
-    # 2) long-fetch warning:
-    await update.message.reply_text(
-        "⏳ Fetching Model channels please wait this could take 2-5 mins as we have hundreds…"
-    )
-
-    # 3) build fresh list
-    output_sections = []
-    guild = discord_client.get_guild(DISCORD_GUILD_ID)
+async def fetch_and_post():
+    global adaptive_delay
+    print(f"\n🚀 fetch_and_post started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    guild = client.get_guild(GUILD_ID)
     if not guild:
-        return await update.message.reply_text("❌ Guild not found.")
+        print(f"❌ ERROR: Guild {GUILD_ID} not found!")
+        return
 
-    for category in CATEGORIES_TO_INCLUDE:
-        matched = [
-            ch.name
-            for ch in guild.text_channels
-            if ch.category
-            and ch.category.name.strip().lower() == category.strip().lower()
-        ]
-        if matched:
-            lines = "\n".join(f"• {escape_md2(name)}" for name in matched)
-            header = f"*{escape_md2(category)}*"
-            output_sections.append(f"{header}\n{lines}")
+    for category_name in CATEGORIES_TO_INCLUDE:
+        print(f"\n🔍 Processing category: '{category_name}'")
+        matched_channels = []
+        for ch in guild.text_channels:
+            if ch.category and ch.category.name.strip().lower() == category_name.strip().lower():
+                print(f"    ✅ Found: {ch.name} in {ch.category.name}")
+                matched_channels.append(ch)
 
-    if not output_sections:
-        return await update.message.reply_text("❌ No configured categories found.")
+        if not matched_channels:
+            print(f"❌ No channels found for category '{category_name}'")
+            continue
 
-    # 4) send in 5-section chunks so we never exceed Telegram limits
-    for batch in chunked(output_sections, 5):
-        text = "\n\n".join(batch)
-        await update.message.reply_markdown_v2(text)
+        formatted = f"```md\n# {category_name}\n"
+        for ch in matched_channels:
+            formatted += f"- {ch.name}\n"
+        formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC_\n```"
 
-telegram_app.add_handler(CommandHandler("start", start_handler))
+        try:
+            response = requests.post(WEBHOOK_URL, json={"content": formatted})
+            if response.status_code == 204:
+                print(f"✅ Sent '{category_name}' ({len(formatted)} chars) | Delay: {adaptive_delay:.2f}s")
+                adaptive_delay = max(0.5, adaptive_delay * 0.8)  # Speed up
+            elif response.status_code == 429:
+                retry_after = float(response.headers.get("Retry-After", 5))
+                print(f"⚠️ Rate limited! Backing off for {retry_after}s...")
+                adaptive_delay = min(adaptive_delay * 2, 10)  # Slow down, cap at 10s
+                await asyncio.sleep(retry_after)
+            else:
+                print(f"❌ Error sending '{category_name}' | Status: {response.status_code}, Response: {response.text}")
+                adaptive_delay = min(adaptive_delay * 1.2, 10)  # Slow down slightly
+        except Exception as e:
+            print(f"❌ Exception sending '{category_name}': {e}")
+            adaptive_delay = min(adaptive_delay * 1.5, 10)  # Slow down more
 
+        await asyncio.sleep(adaptive_delay)
 
-# ────── FLASK WEBHOOK ──────
-@app.route("/", methods=["GET"])
-def index():
-    return "ok"
+    print("✅ fetch_and_post complete.")
 
+def setup_schedule():
+    try:
+        tz = pytz.timezone(POST_SCHEDULE['timezone'])
+        dt_local = datetime.datetime.strptime(POST_SCHEDULE['datetime'], "%Y-%m-%d %H:%M")
+        dt_utc = tz.localize(dt_local).astimezone(pytz.utc)
+        repeat_str = POST_SCHEDULE['repeat_every']
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put(update)
-    return "OK"
+        if repeat_str.endswith('d'):
+            seconds = int(repeat_str[:-1]) * 86400
+        elif repeat_str.endswith('h'):
+            seconds = int(repeat_str[:-1]) * 3600
+        elif repeat_str.endswith('m'):
+            seconds = int(repeat_str[:-1]) * 60
+        else:
+            raise ValueError("Invalid format: Use '1d', '4h', '30m'")
 
+        scheduler.add_job(fetch_and_post, trigger=IntervalTrigger(
+            start_date=dt_utc,
+            seconds=seconds
+        ))
 
-def run_webhook():
-    # tell Telegram where to send updates
-    telegram_app.bot.set_webhook(WEBHOOK_URL)
-    # run flask
-    app.run(host="0.0.0.0", port=PORT)
+        scheduler.start()
+        print(f"🗓️ Scheduled: Starts {dt_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC, repeats every {repeat_str}")
+    except Exception as e:
+        print(f"❌ Scheduling error: {e}")
 
+@client.event
+async def on_ready():
+    print(f"\n✅ Bot logged in as {client.user} ({client.user.id})")
+    await fetch_and_post()
+    setup_schedule()
 
-# ────── START EVERYTHING ──────
-if __name__ == "__main__":
-    # 1) start webhook + Flask in thread
-    threading.Thread(target=run_webhook, daemon=True).start()
-    # 2) start Discord client (blocking)
-    discord_client.run(DISCORD_TOKEN)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running."
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    import threading
+    threading.Thread(target=run_flask).start()
+    client.run(TOKEN)
