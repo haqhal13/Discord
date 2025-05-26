@@ -1,20 +1,23 @@
 import os
 import logging
+from dotenv import load_dotenv
 from flask import Flask, request
 import discord
-import asyncio
-from telegram import Bot
-from telegram.ext import Application, CommandHandler
-from dotenv import load_dotenv
+from telegram import Bot, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, webhook
 
-# ─── CONFIGURATION ─────────────────────────────────────────────────────────
+# --- Configuration & Logging ---
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-DISCORD_GUILD_ID = int(os.getenv('DISCORD_GUILD_ID', '0'))
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # e.g. https://your-app.onrender.com/webhook
+DISCORD_GUILD_ID = int(os.getenv('DISCORD_GUILD_ID'))
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # https://your-domain.com/webhook
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Only these categories will be included
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
     '🧔 MALE CREATORS  / AGENCY',
@@ -36,80 +39,78 @@ CATEGORIES_TO_INCLUDE = [
     '🔞 PORN',
     'Uncatagorised Girls'
 ]
-INCLUDE_SET = { name.strip().lower() for name in CATEGORIES_TO_INCLUDE }
+_allowed = {c.strip() for c in CATEGORIES_TO_INCLUDE}
 
-# ─── LOGGING ────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# ─── DISCORD CLIENT SETUP ──────────────────────────────────────────────────
+# --- Discord Client Setup ---
 intents = discord.Intents.default()
 intents.guilds = True
-intents.messages = False
-discord_client = discord.Client(intents=intents)
+client = discord.Client(intents=intents)
 
-async def fetch_discord_channels() -> str:
-    logging.info("Fetching Discord channels...")
-    guild = discord_client.get_guild(DISCORD_GUILD_ID)
-    if guild is None:
-        logging.error(f"Guild ID {DISCORD_GUILD_ID} not found!")
-        return "❌ Discord guild not found."
+# --- Telegram Bot Setup ---
+bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    lines = []
-    for category in guild.categories:
-        if category.name.strip().lower() in INCLUDE_SET:
-            lines.append(f"<b>{category.name}</b>")
-            for ch in category.text_channels:
-                lines.append(f" - {ch.name}")
-            lines.append("")
+def filter_channels(guild):
+    out = []
+    for ch in guild.text_channels:
+        if ch.category and ch.category.name.strip() in _allowed:
+            out.append((ch.category.name.strip(), ch.name))
+    return out
 
-    if not lines:
-        logging.warning("No matching categories found.")
-        return "❌ No matching categories."
-
-    # wrap in HTML <pre> for fixed spacing
-    text = "\n".join(lines).strip()
-    return text
-
-# ─── TELEGRAM BOT SETUP ───────────────────────────────────────────────────
-app = Flask(__name__)
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-async def start_handler(update, context):
-    logging.info(f"/start by {update.effective_user.id}")
-    await update.message.reply_text('⏳ Fetching Model channels please wait his could take 2-5 mins as we have hundreds...')
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user.first_name
+    await update.message.reply_text(
+        f"⏳ Getting up to date list, please wait 2-5 mins...", parse_mode='HTML'
+    )
     try:
-        text = await fetch_discord_channels()
-        # send as HTML-formatted text
-        await update.message.reply_text(text, parse_mode='HTML')
-        logging.info("Channels sent successfully.")
+        await client.wait_until_ready()
+        guild = client.get_guild(DISCORD_GUILD_ID)
+        if not guild:
+            raise ValueError("Guild not found")
+
+        logger.info("⏳ Fetching Model channels please wait this could take 2-5 mins as we have hundreds...")
+        channels = filter_channels(guild)
+        if not channels:
+            text = "❌ No matching categories or channels found."
+        else:
+            lines = []
+            current_cat = None
+            for cat, name in sorted(channels):
+                if cat != current_cat:
+                    lines.append(f"\n<b>{cat}</b>")
+                    current_cat = cat
+                lines.append(f" - {name}")
+            text = "\n".join(lines)
+
+        await update.message.reply_text(
+            f"<b>Guild Channels:</b>\n{text}", parse_mode='HTML', disable_web_page_preview=True
+        )
     except Exception as e:
-        logging.error(f"Failed to fetch channels: {e}")
-        await update.message.reply_text('❌ Could not fetch channels.')
+        logger.error(f"Failed to fetch channels: {e}")
+        await update.message.reply_text(
+            "❌ Could not fetch channels.", parse_mode='HTML'
+        )
 
-telegram_app.add_handler(CommandHandler('start', start_handler))
+# Register Telegram handler
+t_bot = bot_app
+t_bot.add_handler(CommandHandler('start', start_handler))
 
-# ─── FLASK WEBHOOK ENDPOINT ───────────────────────────────────────────────
+# --- Flask Webhook Receiver ---
+app = Flask(__name__)
+
 @app.route('/webhook', methods=['POST'])
-def webhook():
-    update = discord.utils.async_to_sync(telegram_app.bot.parse_update)(request.get_data())
-    asyncio.run(telegram_app.process_update(update))
+def webhook_route():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, Bot(TELEGRAM_TOKEN))
+    bot_app._process_update(update)
     return 'OK', 200
 
-# ─── MAIN ENTRYPOINT ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    # Start Discord client
-    loop = asyncio.get_event_loop()
-    loop.create_task(discord_client.start(DISCORD_TOKEN))
+    # set Telegram webhook
+    Bot(TELEGRAM_TOKEN).set_webhook(f"{WEBHOOK_URL}/webhook")
+    logger.info("🚀 Telegram webhook initialized")
 
-    # Set Telegram webhook
-    bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    logging.info("🚀 Telegram webhook initialized")
+    # start Discord
+    logger.info("🚀 Starting Discord client")
+    client.run(DISCORD_TOKEN)
 
-    # Run Flask (this will block)
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
