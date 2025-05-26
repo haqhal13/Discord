@@ -3,13 +3,21 @@ import asyncio
 import datetime
 import requests
 import os
+import pytz
 from flask import Flask
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
-# CONFIGURATION (uses environment variables)
+# CONFIGURATION (edit below)
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+
+POST_SCHEDULE = {
+    "datetime": "2025-06-01 14:30",  # Initial post time (local time)
+    "timezone": "Europe/London",      # e.g., 'Europe/London' or 'Asia/Dubai'
+    "repeat_every": "2d"             # e.g., '1d', '2d', '4h', '30m'
+}
 
 CATEGORIES_TO_INCLUDE = [
     '📦 ETHNICITY VAULTS',
@@ -33,81 +41,79 @@ CATEGORIES_TO_INCLUDE = [
     'Uncatagorised Girls'
 ]
 
+# Discord & Scheduler Setup
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
-
 client = discord.Client(intents=intents)
 scheduler = AsyncIOScheduler()
 
+# Fetch and Post Logic
 async def fetch_and_post():
-    print("\n🚀 Starting fetch_and_post at", datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'), "UTC")
-    
+    print(f"\n🚀 fetch_and_post started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     guild = client.get_guild(GUILD_ID)
     if not guild:
-        print("❌ ERROR: Could not find server with GUILD_ID:", GUILD_ID)
+        print(f"❌ ERROR: Guild {GUILD_ID} not found!")
         return
-    
-    print(f"✅ Connected to server: {guild.name} (ID: {guild.id})")
-    print(f"✅ Categories to process: {CATEGORIES_TO_INCLUDE}")
-
-    # List all categories and channels in server
-    all_categories = [c.name for c in guild.categories]
-    print(f"📂 Server has {len(all_categories)} categories: {all_categories}")
-
-    # Delete previous bot posts
-    print("🗑️ Deleting previous messages by the bot...")
-    for channel in guild.text_channels:
-        async for message in channel.history(limit=100):
-            if message.author == client.user:
-                try:
-                    await message.delete()
-                    print(f"🗑️ Deleted message: {message.id} in #{channel.name}")
-                except Exception as e:
-                    print(f"⚠️ Failed to delete message {message.id}: {e}")
 
     for category_name in CATEGORIES_TO_INCLUDE:
         print(f"\n🔍 Searching for category: '{category_name}'")
         matched_channels = []
         for ch in guild.text_channels:
-            if ch.category:
-                print(f"    Checking channel: {ch.name} in category '{ch.category.name}' (ID: {ch.category.id})")
-                if ch.category.name.strip().lower() == category_name.strip().lower():
-                    print(f"    ✅ Match found: {ch.name} under '{ch.category.name}'")
-                    matched_channels.append(ch)
-        
+            if ch.category and ch.category.name.strip().lower() == category_name.strip().lower():
+                print(f"    ✅ Found: {ch.name} in {ch.category.name}")
+                matched_channels.append(ch)
+
         if not matched_channels:
-            print(f"❌ No channels found under category: '{category_name}'")
+            print(f"❌ No channels found for category '{category_name}'")
         else:
             formatted = f"```md\n# {category_name}\n"
             for ch in matched_channels:
                 formatted += f"- {ch.name}\n"
             formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC_\n```"
 
-            print(f"📤 Sending data for category: '{category_name}'")
-            print("Content to send:\n", formatted)
-
             response = requests.post(WEBHOOK_URL, json={"content": formatted})
             if response.status_code == 204:
-                print(f"✅ Successfully sent category: '{category_name}'")
+                print(f"✅ Sent category: '{category_name}'")
             else:
-                print(f"❌ Failed to send category '{category_name}'. Status: {response.status_code}, Response: {response.text}")
+                print(f"❌ Failed to send '{category_name}': {response.status_code}, {response.text}")
 
             await asyncio.sleep(2)
+    print("✅ fetch_and_post complete.")
 
-    print("✅ fetch_and_post completed.\n")
+# Scheduler Setup
+def setup_schedule():
+    try:
+        tz = pytz.timezone(POST_SCHEDULE['timezone'])
+        dt_local = datetime.datetime.strptime(POST_SCHEDULE['datetime'], "%Y-%m-%d %H:%M")
+        dt_utc = tz.localize(dt_local).astimezone(pytz.utc)
+        repeat_str = POST_SCHEDULE['repeat_every']
 
+        if repeat_str.endswith('d'):
+            seconds = int(repeat_str[:-1]) * 86400
+        elif repeat_str.endswith('h'):
+            seconds = int(repeat_str[:-1]) * 3600
+        elif repeat_str.endswith('m'):
+            seconds = int(repeat_str[:-1]) * 60
+        else:
+            raise ValueError("Invalid format: Use '1d', '4h', '30m'")
+
+        scheduler.add_job(fetch_and_post, trigger=IntervalTrigger(
+            start_date=dt_utc,
+            seconds=seconds
+        ))
+
+        scheduler.start()
+        print(f"🗓️ Scheduled job: Starts {dt_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC, repeats every {repeat_str}")
+    except Exception as e:
+        print(f"❌ Scheduling error: {e}")
+
+# Discord Bot Events
 @client.event
 async def on_ready():
-    print(f"\n✅ Bot is logged in as {client.user} (ID: {client.user.id})")
+    print(f"\n✅ Bot logged in as {client.user} ({client.user.id})")
     await fetch_and_post()
-
-    # Schedule the weekly job
-    user_datetime_str = "2025-06-01 14:30"  # Set your time here (UTC)
-    dt = datetime.datetime.strptime(user_datetime_str, "%Y-%m-%d %H:%M")
-    scheduler.add_job(fetch_and_post, trigger='cron', day_of_week=dt.weekday(), hour=dt.hour, minute=dt.minute)
-    scheduler.start()
-    print(f"🗓️ Scheduled weekly job at {dt.strftime('%A %H:%M')} UTC")
+    setup_schedule()
 
 # Flask app for uptime pings
 app = Flask(__name__)
@@ -120,6 +126,7 @@ def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
 
+# Run Everything
 if __name__ == '__main__':
     import threading
     threading.Thread(target=run_flask).start()
