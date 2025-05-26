@@ -8,15 +8,15 @@ from flask import Flask
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-# CONFIGURATION (edit below)
+# CONFIGURATION
 TOKEN = os.getenv('DISCORD_TOKEN')
 GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 POST_SCHEDULE = {
-    "datetime": "2025-06-01 8:00",  # Initial post time (local time)
-    "timezone": "Europe/London",      # e.g., 'Europe/London' or 'Asia/Dubai'
-    "repeat_every": "7d"             # e.g., '1d', '2d', '4h', '30m'
+    "datetime": "2025-06-01 08:00",   # First post time (local time)
+    "timezone": "Europe/London",      # e.g., 'Europe/London', 'Asia/Dubai'
+    "repeat_every": "7d"              # e.g., '1d', '2d', '4h', '30m'
 }
 
 CATEGORIES_TO_INCLUDE = [
@@ -41,23 +41,25 @@ CATEGORIES_TO_INCLUDE = [
     'Uncatagorised Girls'
 ]
 
-# Discord & Scheduler Setup
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
 client = discord.Client(intents=intents)
 scheduler = AsyncIOScheduler()
 
-# Fetch and Post Logic
+adaptive_delay = 1  # Start fast (1 second)
+
 async def fetch_and_post():
+    global adaptive_delay
     print(f"\n🚀 fetch_and_post started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
     guild = client.get_guild(GUILD_ID)
     if not guild:
         print(f"❌ ERROR: Guild {GUILD_ID} not found!")
         return
 
     for category_name in CATEGORIES_TO_INCLUDE:
-        print(f"\n🔍 Searching for category: '{category_name}'")
+        print(f"\n🔍 Processing category: '{category_name}'")
         matched_channels = []
         for ch in guild.text_channels:
             if ch.category and ch.category.name.strip().lower() == category_name.strip().lower():
@@ -66,22 +68,34 @@ async def fetch_and_post():
 
         if not matched_channels:
             print(f"❌ No channels found for category '{category_name}'")
-        else:
-            formatted = f"```md\n# {category_name}\n"
-            for ch in matched_channels:
-                formatted += f"- {ch.name}\n"
-            formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC_\n```"
+            continue
 
+        formatted = f"```md\n# {category_name}\n"
+        for ch in matched_channels:
+            formatted += f"- {ch.name}\n"
+        formatted += f"\n_Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC_\n```"
+
+        try:
             response = requests.post(WEBHOOK_URL, json={"content": formatted})
             if response.status_code == 204:
-                print(f"✅ Sent category: '{category_name}'")
+                print(f"✅ Sent '{category_name}' ({len(formatted)} chars) | Delay: {adaptive_delay:.2f}s")
+                adaptive_delay = max(0.5, adaptive_delay * 0.8)  # Speed up
+            elif response.status_code == 429:
+                retry_after = float(response.headers.get("Retry-After", 5))
+                print(f"⚠️ Rate limited! Backing off for {retry_after}s...")
+                adaptive_delay = min(adaptive_delay * 2, 10)  # Slow down, cap at 10s
+                await asyncio.sleep(retry_after)
             else:
-                print(f"❌ Failed to send '{category_name}': {response.status_code}, {response.text}")
+                print(f"❌ Error sending '{category_name}' | Status: {response.status_code}, Response: {response.text}")
+                adaptive_delay = min(adaptive_delay * 1.2, 10)  # Slow down slightly
+        except Exception as e:
+            print(f"❌ Exception sending '{category_name}': {e}")
+            adaptive_delay = min(adaptive_delay * 1.5, 10)  # Slow down more
 
-            await asyncio.sleep(2)
+        await asyncio.sleep(adaptive_delay)
+
     print("✅ fetch_and_post complete.")
 
-# Scheduler Setup
 def setup_schedule():
     try:
         tz = pytz.timezone(POST_SCHEDULE['timezone'])
@@ -104,18 +118,16 @@ def setup_schedule():
         ))
 
         scheduler.start()
-        print(f"🗓️ Scheduled job: Starts {dt_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC, repeats every {repeat_str}")
+        print(f"🗓️ Scheduled: Starts {dt_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC, repeats every {repeat_str}")
     except Exception as e:
         print(f"❌ Scheduling error: {e}")
 
-# Discord Bot Events
 @client.event
 async def on_ready():
     print(f"\n✅ Bot logged in as {client.user} ({client.user.id})")
     await fetch_and_post()
     setup_schedule()
 
-# Flask app for uptime pings
 app = Flask(__name__)
 
 @app.route('/')
@@ -126,7 +138,6 @@ def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
 
-# Run Everything
 if __name__ == '__main__':
     import threading
     threading.Thread(target=run_flask).start()
