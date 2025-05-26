@@ -14,9 +14,9 @@ GUILD_ID = int(os.getenv('GUILD_ID'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 POST_SCHEDULE = {
-    "datetime": "2025-06-01 14:30",  # Initial post time (local time)
+    "datetime": "2025-06-01 8:00",  # Initial post time (local time)
     "timezone": "Europe/London",      # e.g., 'Europe/London' or 'Asia/Dubai'
-    "repeat_every": "2d"             # e.g., '1d', '2d', '4h', '30m'
+    "repeat_every": "7d"             # e.g., '1d', '2d', '4h', '30m'
 }
 
 CATEGORIES_TO_INCLUDE = [
