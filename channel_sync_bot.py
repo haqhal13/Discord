@@ -113,4 +113,3 @@ if __name__ == '__main__':
     logger.info("🚀 Starting Discord client")
     client.run(DISCORD_TOKEN)
 
-
