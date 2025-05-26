@@ -81,7 +81,7 @@ telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
 async def start_handler(update, context):
     logging.info(f"/start by {update.effective_user.id}")
-    await update.message.reply_text('⏳ Fetching Discord channels...')
+    await update.message.reply_text('⏳ Fetching Model channels please wait his could take 2-5 mins as we have hundreds...')
     try:
         text = await fetch_discord_channels()
         # send as HTML-formatted text
